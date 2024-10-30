@@ -31,72 +31,32 @@ def home():
     return 'Server API is running'
 
 @app.route('/predict/arima', methods=['POST'])
-def predict_arima():
-    data = request.json
+def predict_arima(): 
     try:
-        # Log incoming data
-        print("Received data:", data)
+        # Get the number of weeks to forecast from request
+        data = request.json
+        steps = data.get('steps', 12)  # Default to 12 weeks if not provided
 
-        # Extract start date and steps from input data
-        start_date_str = data.get('start_date')
-        steps = data.get('steps', 4)
-        if not start_date_str:
-            return jsonify({'error': 'Start date is required'}), 400
+        # Generate predictions
+        arima_model = models['arima_model']
+        predictions = arima_model.forecast(steps=steps)
+        predictions_rounded = predictions.round().tolist()  # Round and convert to list for JSON response
 
-        # Parse start date
-        start_date = pd.to_datetime(start_date_str, dayfirst=True)
-        print("Parsed start date:", start_date)
+        # Create date range for the predictions
+        last_date = data.get('last_date', pd.Timestamp.now())
+        future_dates = pd.date_range(start=last_date, periods=steps, freq='W').strftime('%Y-%m-%d').tolist()
 
-        # Check model structure and latest date
-        arima_model = models.get('arima_model')
-        if arima_model is None:
-            return jsonify({'error': 'ARIMA model not found'}), 500
-        print("ARIMA model loaded successfully.")
-
-        
-        #convert to numpy arima_model, add seperate var that is converted
-        if isinstance(arima_model.data.endog, pd.Series):
-            arima_model_numpy = arima_model.data.endog.to_numpy()
-        else:
-            arima_model_numpy = arima_model.data.endog
-        
-        print(f"The type is: {type(arima_model_numpy)}")
-
-        # Ensure the model's data end date is accessible
-        last_date = arima_model.data.endog.index[-1] if hasattr(arima_model.data.endog, 'index') else None
-        if last_date is not None and not isinstance(last_date, pd.Timestamp):
-            last_date = pd.to_datetime(last_date, dayfirst=True)
-
-        # Calculate weeks to forecast
-        weeks_ahead = (start_date - last_date).days // 7 # line 71, in predict_arima TypeError: unsupported operand type(s) for -: 'Timestamp' and 'NoneType
-        if weeks_ahead < 0:
-            return jsonify({'error': 'Start date must be after the last date in the dataset'}), 400
-        print("Weeks ahead:", weeks_ahead)
-
-        # Total forecast steps needed
-        total_steps = weeks_ahead + steps
-        print("Total steps for forecast:", total_steps)
-
-        # Generate the forecast
-        forecast = arima_model.forecast(steps=total_steps)
-        print("Forecast generated:", forecast)
-
-        # Filter forecast to start date and onward
-        relevant_forecast = forecast[weeks_ahead:]
-        forecast_rounded = relevant_forecast.round().tolist()
-        print("Rounded forecast:", forecast_rounded)
-
-        # Create response with dates formatted as dd/mm/yyyy
-        future_dates = pd.date_range(start=start_date, periods=steps, freq='W')
-        response = [{'date': date.strftime('%d/%m/%Y'), 'prediction': pred} for date, pred in zip(future_dates, forecast_rounded)]
-        print("Response:", response)
-
-        return jsonify({'prediction': response})
-
+        # Build response
+        response = {
+            "predictions": {
+                "dates": future_dates,
+                "values": predictions_rounded
+            }
+        }
+        return jsonify(response)
+    
     except Exception as e:
-        error_message = traceback.format_exc()
-        print("Error occurred:\n", error_message)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 #add prints for debug
 @app.route('/predict/logistic', methods=['POST'])
