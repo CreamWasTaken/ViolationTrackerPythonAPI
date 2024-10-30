@@ -68,7 +68,7 @@ def predict_arima():
             last_date = pd.to_datetime(last_date, dayfirst=True)
 
         # Calculate weeks to forecast
-        weeks_ahead = (start_date - last_date).days // 7
+        weeks_ahead = (start_date - last_date).days // 7 # line 71, in predict_arima TypeError: unsupported operand type(s) for -: 'Timestamp' and 'NoneType
         if weeks_ahead < 0:
             return jsonify({'error': 'Start date must be after the last date in the dataset'}), 400
         print("Weeks ahead:", weeks_ahead)
