@@ -1,13 +1,12 @@
 from flask import Flask, request, jsonify
-import pickle
+import joblib
 import os
 import pandas as pd
-from datetime import datetime
 import traceback
 
 app = Flask(__name__)
 
-# Load your models
+# Load models
 model_paths = {
     'arima_model': os.path.join(os.path.dirname(__file__), 'arima_model.pkl'),
     'logistic_regression_model': os.path.join(os.path.dirname(__file__), 'logistic_regression_model.pkl'),
@@ -17,14 +16,7 @@ model_paths = {
 models = {}
 for name, path in model_paths.items():
     with open(path, 'rb') as f:
-        models[name] = pickle.load(f)
-
-expected_columns = [
-    'Year', 'Offense', 'Program_BAEL', 'Program_BASS', 'Program_BEED', 
-    'Program_BPED', 'Program_BS PSYCH', 'Program_BSAM', 'Program_BSCE', 
-    'Program_BSED', 'Program_BSHM', 'Program_BSIS', 'Program_BSIT', 
-    'Program_BSPSYCH', 'Program_BTLED'
-]
+        models[name] = joblib.load(f)
 
 @app.route('/')
 def home():
@@ -33,20 +25,16 @@ def home():
 @app.route('/predict/arima', methods=['POST'])
 def predict_arima(): 
     try:
-        # Get the number of weeks to forecast from request
         data = request.json
-        steps = data.get('steps', 12)  # Default to 12 weeks if not provided
+        steps = data.get('steps', 12)
 
-        # Generate predictions
         arima_model = models['arima_model']
         predictions = arima_model.forecast(steps=steps)
-        predictions_rounded = predictions.round().tolist()  # Round and convert to list for JSON response
+        predictions_rounded = predictions.round().tolist()
 
-        # Create date range for the predictions
         last_date = data.get('last_date', pd.Timestamp.now())
         future_dates = pd.date_range(start=last_date, periods=steps, freq='W').strftime('%Y-%m-%d').tolist()
 
-        # Build response
         response = {
             "predictions": {
                 "dates": future_dates,
@@ -58,57 +46,119 @@ def predict_arima():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-#add prints for debug
 @app.route('/predict/logistic', methods=['POST'])
 def predict_logistic():
-    # Step 1: Extract data from JSON request
-    data = request.json
+    try:
+        data = request.json
 
-    # Step 2: Create DataFrame from input data
-    new_data = pd.DataFrame({
-        'Program': [data['Program']], 
-        'Year': [data['Year_level']],       
-        'Offense': [data['Offense']]
-    })
+        # Input data
+        program = data['Program']
+        year_level = data['Year_Level']
+        offense = data['Offense']
 
-    # new_data = pd.DataFrame({
-    # 'Program': ['BSIT'], 
-    # 'Year_Level': [4],       
-    # 'Offense': [1]           
-    # })
+        # Prepare data for encoding and prediction
+        input_data = pd.DataFrame({
+            'Program': [program],
+            'Year_Level': [year_level],
+            'Offense': [offense]
+        })
 
-    # Step 3: Encode categorical feature(s) using the encoder from models
-    encoder = models['program_encoder']
-    if hasattr(encoder, 'categories_'):
-        print("good to g")
-    else:
-        print("not fitted")
-    encoded_new_data = encoder.transform(new_data[['Program']]).toarray()
-    encoded_new_data_df = pd.DataFrame(encoded_new_data, columns=encoder.get_feature_names_out(['Program']))
+        # Encode the 'Program' feature using the encoder
+        encoder = models['program_encoder']
+        encoded_program = encoder.transform(input_data[['Program']]).toarray()
+        encoded_program_df = pd.DataFrame(encoded_program, columns=encoder.get_feature_names_out(['Program']))
 
-    # Step 4: Combine encoded data with the remaining features
-    new_data_prepared = pd.concat([new_data.drop(['Program'], axis=1), encoded_new_data_df], axis=1)
+        # Combine encoded program with other features
+        input_data_encoded = pd.concat([input_data.drop(['Program'], axis=1), encoded_program_df], axis=1)
+        input_data_encoded = input_data_encoded.reindex(columns=models['logistic_regression_model'].feature_names_in_, fill_value=0)
 
-    # Step 5: Align columns with expected structure
-    new_data_prepared = new_data_prepared.reindex(columns=expected_columns, fill_value=0)
+        # Make prediction
+        logistic_model = models['logistic_regression_model']
+        probability = logistic_model.predict_proba(input_data_encoded)[0][1]
+        prediction = logistic_model.predict(input_data_encoded)[0]
 
-    # Step 6: Predict re-offending probability and class
-    model = models['logistic_regression_model']
-    probability = model.predict_proba(new_data_prepared)[0][1]
-    prediction = model.predict(new_data_prepared)[0]
+        # Response
+        result = {
+            'predicted_reoffend_status': int(prediction),
+            'probability_of_reoffending': round(probability, 2)
+        }
+        return jsonify(result)
 
-    # Step 7: Return the prediction and probability as JSON response
-    return jsonify({
-        'prediction': int(prediction),  # Convert to int for JSON serialization
-        'probability': round(probability, 2)  # Round probability for readability
-    })
+    except Exception as e:
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
 @app.route('/predict/encoder', methods=['POST'])
 def predict_encoder():
-    data = request.json
+    try:
+        data = request.json
 
-    prediction = models['program_encoder'].predict([data['input']]).tolist()
-    return jsonify({'prediction': prediction})
+        # Input program to encode
+        program = data['Program']
+        input_data = pd.DataFrame({'Program': [program]})
+
+        # Encode using preloaded encoder
+        encoder = models['program_encoder']
+        encoded_program = encoder.transform(input_data[['Program']]).toarray()
+        encoded_program_df = pd.DataFrame(encoded_program, columns=encoder.get_feature_names_out(['Program']))
+
+        # Convert to dictionary for JSON response
+        encoded_result = encoded_program_df.to_dict(orient='records')[0]
+        return jsonify(encoded_result)
+
+    except Exception as e:
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
+    
+@app.route('/predict/logistic_bulk', methods=['POST'])
+def predict_logistic_bulk():
+    try:
+        data_list = request.json  # Expecting a list of dictionaries
+
+        # Verify that data_list is a list of dictionaries
+        if not isinstance(data_list, list) or not all(isinstance(item, dict) for item in data_list):
+            return jsonify({"error": "Input data must be a list of dictionaries"}), 400
+
+        results = []
+
+        for data in data_list:
+            # Extract data
+            program = data['Program']
+            year_level = data['Year_Level']
+            offense = data['Offense']
+
+            # Prepare data for encoding and prediction
+            input_data = pd.DataFrame({
+                'Program': [program],
+                'Year_Level': [year_level],
+                'Offense': [offense]
+            })
+
+            # Encode the 'Program' feature using the encoder
+            encoder = models['program_encoder']
+            encoded_program = encoder.transform(input_data[['Program']]).toarray()
+            encoded_program_df = pd.DataFrame(encoded_program, columns=encoder.get_feature_names_out(['Program']))
+
+            # Combine encoded program with other features
+            input_data_encoded = pd.concat([input_data.drop(['Program'], axis=1), encoded_program_df], axis=1)
+            input_data_encoded = input_data_encoded.reindex(columns=models['logistic_regression_model'].feature_names_in_, fill_value=0)
+
+            # Make prediction
+            logistic_model = models['logistic_regression_model']
+            probability = logistic_model.predict_proba(input_data_encoded)[0][1]
+            prediction = logistic_model.predict(input_data_encoded)[0]
+
+            # Append each result to the list
+            results.append({
+                'input': data,
+                'predicted_reoffend_status': int(prediction),
+                'probability_of_reoffending': round(probability, 2)
+            })
+
+        # Return all predictions as a JSON array
+        return jsonify(results)
+
+    except Exception as e:
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
+
 
 @app.route('/hello', methods=['GET'])
 def hello():

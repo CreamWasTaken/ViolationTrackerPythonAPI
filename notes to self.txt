@@ -322,3 +322,45 @@ def hello():
 if __name__ == '__main__':
     app.run(port=5000)
 
+
+
+
+
+
+
+
+from flask import Flask, request, jsonify
+import pickle
+import os
+import pandas as pd
+from datetime import datetime
+import traceback
+
+app = Flask(__name__)
+
+# Load your models
+model_paths = {
+    'arima_model': os.path.join(os.path.dirname(__file__), 'arima_model.pkl'),
+    'logistic_regression_model': os.path.join(os.path.dirname(__file__), 'logistic_regression_model.pkl'),
+    'program_encoder': os.path.join(os.path.dirname(__file__), 'program_encoder.pkl')
+}
+
+models = {}
+for name, path in model_paths.items():
+    with open(path, 'rb') as f:
+        models[name] = pickle.load(f)
+
+@app.route('/')
+def home():
+    return 'Server API is running'
+
+@app.route('/predict/logistic', methods=['POST'])
+def predict_logistic():
+    data = request.json
+
+if __name__ == '__main__':
+    app.run(port=5000)
+
+  
+
+
