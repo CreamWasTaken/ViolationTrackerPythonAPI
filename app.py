@@ -1,10 +1,12 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import joblib
 import os
 import pandas as pd
 import traceback
 
 app = Flask(__name__)
+CORS(app) #allow all domains to acces API
 
 # Load models
 model_paths = {
@@ -166,3 +168,4 @@ def hello():
 
 if __name__ == '__main__':
     app.run(port=5000)
+# add cors
