@@ -6,7 +6,7 @@ import pandas as pd
 import traceback
 
 app = Flask(__name__)
-CORS(app) #allow all domains to acces API
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Load models
 model_paths = {
